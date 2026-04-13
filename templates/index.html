@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Congress Stock Tracker 🏛️</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #080c14; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+    .glass  { background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.07); }
+    .glow-b { box-shadow: 0 0 20px rgba(59,130,246,0.15); }
+    .glow-g { box-shadow: 0 0 20px rgba(34,197,94,0.12); }
+    .glow-r { box-shadow: 0 0 20px rgba(239,68,68,0.12); }
+    .party-D { border-left: 3px solid #3b82f6; }
+    .party-R { border-left: 3px solid #ef4444; }
+    .party-I { border-left: 3px solid #eab308; }
+    .fade-in  { animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity:1; transform:none; } }
+    .tab-active { color:#fff; border-bottom: 2px solid #3b82f6; }
+    .tab-idle   { color:#64748b; border-bottom: 2px solid transparent; }
+    .badge-buy  { background:#14532d; color:#86efac; border:1px solid #166534; }
+    .badge-sell { background:#450a0a; color:#fca5a5; border:1px solid #7f1d1d; }
+    .badge-part { background:#431407; color:#fdba74; border:1px solid #9a3412; }
+    .badge-ex   { background:#1e1b4b; color:#a5b4fc; border:1px solid #3730a3; }
+    ::-webkit-scrollbar { width:6px; } ::-webkit-scrollbar-track { background:#0f172a; }
+    ::-webkit-scrollbar-thumb { background:#334155; border-radius:3px; }
+    .modal-bg { background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<header class="sticky top-0 z-40 glass border-b border-slate-800 px-5 py-3">
+  <div class="max-w-7xl mx-auto flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🏛️</span>
+      <div>
+        <h1 class="text-base font-bold text-white leading-tight">Congress Stock Tracker</h1>
+        <p class="text-slate-500 text-xs">Surveillance en temps réel des transactions du Congrès américain</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="last-update" class="text-slate-600 text-xs hidden sm:block"></span>
+      <div id="live-dot" class="flex items-center gap-1.5 text-xs text-emerald-400">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+        <span>Live</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════ STATS BAR ════════════════ -->
+<div class="border-b border-slate-800/60 bg-slate-900/40">
+  <div class="max-w-7xl mx-auto px-5 py-3 grid grid-cols-3 sm:grid-cols-5 gap-3 text-center">
+    <div><div id="s-total"  class="text-xl font-bold text-white">—</div><div class="text-xs text-slate-500 mt-0.5">Total trades</div></div>
+    <div><div id="s-buys"   class="text-xl font-bold text-emerald-400">—</div><div class="text-xs text-slate-500 mt-0.5">Achats</div></div>
+    <div><div id="s-sells"  class="text-xl font-bold text-red-400">—</div><div class="text-xs text-slate-500 mt-0.5">Ventes</div></div>
+    <div class="hidden sm:block"><div id="s-pols"  class="text-xl font-bold text-blue-400">—</div><div class="text-xs text-slate-500 mt-0.5">Élus actifs</div></div>
+    <div class="hidden sm:block"><div id="s-ticks" class="text-xl font-bold text-violet-400">—</div><div class="text-xs text-slate-500 mt-0.5">Actions suivies</div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MAIN ═════════════════════ -->
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+  <!-- Tabs -->
+  <div class="flex gap-5 border-b border-slate-800 mb-6">
+    <button class="tab-btn pb-3 text-sm font-medium tab-active" data-tab="trades"      onclick="switchTab('trades')">📋 Trades récents</button>
+    <button class="tab-btn pb-3 text-sm font-medium tab-idle"   data-tab="leaderboard" onclick="switchTab('leaderboard')">🏆 Classement</button>
+    <button class="tab-btn pb-3 text-sm font-medium tab-idle"   data-tab="charts"      onclick="switchTab('charts')">📊 Graphiques</button>
+  </div>
+
+  <!-- ── TRADES PANEL ── -->
+  <div id="panel-trades">
+    <!-- Filters -->
+    <div class="flex gap-2 flex-wrap mb-5">
+      <input id="f-pol"  type="text" placeholder="🔍 Nom…"     class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm w-44 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+      <input id="f-tick" type="text" placeholder="📈 Ticker…"  class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+      <select id="f-type" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <option value="">Tous</option>
+        <option value="purchase">Achats</option>
+        <option value="sale">Ventes</option>
+      </select>
+      <button onclick="applyFilters()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">Filtrer</button>
+      <button onclick="resetFilters()" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">Reset</button>
+    </div>
+
+    <div id="trades-list" class="space-y-2.5"></div>
+    <div class="text-center mt-5">
+      <button id="btn-more" class="hidden glass px-6 py-2 rounded-lg text-sm text-slate-300 hover:text-white transition-colors" onclick="loadMoreTrades()">Charger plus…</button>
+    </div>
+  </div>
+
+  <!-- ── LEADERBOARD PANEL ── -->
+  <div id="panel-leaderboard" class="hidden">
+    <div id="lb-list" class="space-y-2.5"></div>
+  </div>
+
+  <!-- ── CHARTS PANEL ── -->
+  <div id="panel-charts" class="hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="glass rounded-2xl p-5 glow-b">
+        <h3 class="text-sm font-medium text-slate-400 mb-4">📅 Trades par jour (30 derniers jours)</h3>
+        <canvas id="chart-daily" height="220"></canvas>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <h3 class="text-sm font-medium text-slate-400 mb-4">⚖️ Répartition Achats / Ventes</h3>
+        <canvas id="chart-donut" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ═══════════════════ POLITICIAN MODAL ══════════ -->
+<div id="modal" class="fixed inset-0 z-50 hidden modal-bg flex items-center justify-center p-4" onclick="closeModal(event)">
+  <div class="glass rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6" onclick="event.stopPropagation()">
+    <div class="flex items-start justify-between mb-5">
+      <div>
+        <h2 id="m-name"    class="text-xl font-bold text-white"></h2>
+        <p  id="m-meta"    class="text-slate-400 text-sm mt-1"></p>
+      </div>
+      <button onclick="document.getElementById('modal').classList.add('hidden')" class="text-slate-500 hover:text-white text-2xl leading-none">✕</button>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+      <div class="bg-slate-800/60 rounded-xl p-3 text-center">
+        <div id="m-total" class="text-2xl font-bold text-white">—</div>
+        <div class="text-xs text-slate-500 mt-0.5">Total trades</div>
+      </div>
+      <div class="bg-slate-800/60 rounded-xl p-3 text-center">
+        <div id="m-buys"  class="text-2xl font-bold text-emerald-400">—</div>
+        <div class="text-xs text-slate-500 mt-0.5">Achats</div>
+      </div>
+      <div class="bg-slate-800/60 rounded-xl p-3 text-center">
+        <div id="m-sells" class="text-2xl font-bold text-red-400">—</div>
+        <div class="text-xs text-slate-500 mt-0.5">Ventes</div>
+      </div>
+    </div>
+
+    <div id="m-networth" class="hidden bg-yellow-900/20 border border-yellow-800/40 rounded-xl px-4 py-2 text-sm text-yellow-300 mb-5"></div>
+    <div id="m-committees" class="hidden text-slate-400 text-sm mb-5"></div>
+
+    <h3 class="text-sm font-semibold text-slate-300 mb-3">Dernières transactions</h3>
+    <div id="m-trades" class="space-y-2"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════ SCRIPTS ═══════════════════ -->
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let offset = 0, limit = 25, filters = {}, currentTab = 'trades';
+let chartDaily = null, chartDonut = null;
+let chartsLoaded = false, lbLoaded = false;
+
+// ── Tab logic ──────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  ['trades','leaderboard','charts'].forEach(t => {
+    document.getElementById('panel-' + t).classList.toggle('hidden', t !== tab);
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('tab-active', b.dataset.tab === tab);
+    b.classList.toggle('tab-idle',   b.dataset.tab !== tab);
+  });
+  if (tab === 'leaderboard' && !lbLoaded)   { loadLeaderboard(); lbLoaded = true; }
+  if (tab === 'charts'      && !chartsLoaded){ loadCharts();     chartsLoaded = true; }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const PARTY_CLS = { Democrat:'party-D', Republican:'party-R', Independent:'party-I' };
+const PARTY_EMO = { Democrat:'🔵', Republican:'🔴', Independent:'🟡' };
+const CHAMBER   = { senate:'🏛️ Sénateur', house:'🏠 Représentant' };
+
+function partyCls(p) { for (const k in PARTY_CLS) if ((p||'').includes(k)) return PARTY_CLS[k]; return 'party-I'; }
+function partyEmo(p) { for (const k in PARTY_EMO) if ((p||'').includes(k)) return PARTY_EMO[k]; return '⚪'; }
+function chamberLbl(c) { return CHAMBER[c] || '🏛️ Élu'; }
+
+function tradeBadge(type) {
+  const t = (type||'').toLowerCase();
+  if (t.includes('purchase')||t.includes('buy'))
+    return '<span class="badge-buy   px-2 py-0.5 rounded text-xs font-bold">🟢 ACHAT</span>';
+  if (t.includes('sale_full'))
+    return '<span class="badge-sell  px-2 py-0.5 rounded text-xs font-bold">🔴 VENTE TOTALE</span>';
+  if (t.includes('sale_partial'))
+    return '<span class="badge-part  px-2 py-0.5 rounded text-xs font-bold">🟠 VENTE PARTIELLE</span>';
+  if (t.includes('sale')||t.includes('sell'))
+    return '<span class="badge-sell  px-2 py-0.5 rounded text-xs font-bold">🔴 VENTE</span>';
+  if (t.includes('exchange'))
+    return '<span class="badge-ex    px-2 py-0.5 rounded text-xs font-bold">🔄 ÉCHANGE</span>';
+  return `<span class="bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-xs font-bold">${type||'?'}</span>`;
+}
+
+function tradeCard(t) {
+  const pCls = partyCls(t.politician_party);
+  const priceHtml = t.price ? `<span class="text-slate-500 text-xs">@ $${Number(t.price).toFixed(2)}</span>` : '';
+  return `
+  <div class="fade-in glass rounded-xl px-4 py-3 ${pCls} hover:-translate-y-0.5 transition-transform cursor-pointer"
+       onclick="openPolitician('${t.politician_id}','${(t.politician_name||'').replace(/'/g,"\\'")}')">
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${tradeBadge(t.trade_type)}
+          <span class="text-white font-semibold text-sm">${t.politician_name||'—'}</span>
+          <span class="text-slate-500 text-xs">${partyEmo(t.politician_party)} ${t.politician_party||''} · ${chamberLbl(t.politician_chamber)} · ${t.politician_state||''}</span>
+        </div>
+        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+          <span class="font-mono font-bold text-blue-400">${t.ticker && t.ticker!=='N/A' ? '$'+t.ticker : '—'}</span>
+          <span class="text-slate-300 text-sm">${t.company||''}</span>
+          ${priceHtml}
+        </div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-amber-400 font-semibold text-sm">${t.amount_range||'N/A'}</div>
+        <div class="text-slate-500 text-xs mt-0.5">${t.trade_date||''}</div>
+        ${t.filed_date ? `<div class="text-slate-600 text-xs">déclaré ${t.filed_date}</div>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Trades ────────────────────────────────────────────────────────────────────
+async function loadTrades(reset=false) {
+  if (reset) {
+    offset = 0;
+    document.getElementById('trades-list').innerHTML =
+      '<div class="text-center text-slate-500 py-16"><div class="text-4xl mb-3">⏳</div><p>Chargement…</p></div>';
+  }
+
+  const p = new URLSearchParams({ limit, offset, ...filters });
+  const { trades } = await fetch('/api/trades?' + p).then(r => r.json());
+
+  const list = document.getElementById('trades-list');
+  if (reset) list.innerHTML = '';
+
+  if (!trades.length && offset === 0) {
+    list.innerHTML = `
+      <div class="text-center text-slate-500 py-20">
+        <div class="text-5xl mb-4">📭</div>
+        <p class="text-lg">Aucun trade trouvé</p>
+        <p class="text-sm mt-2 text-slate-600">Les données se mettent à jour toutes les 15 min</p>
+      </div>`;
+    document.getElementById('btn-more').classList.add('hidden');
+    return;
+  }
+
+  trades.forEach(t => list.insertAdjacentHTML('beforeend', tradeCard(t)));
+  offset += trades.length;
+  document.getElementById('btn-more').classList.toggle('hidden', trades.length < limit);
+}
+
+function loadMoreTrades() { loadTrades(false); }
+
+function applyFilters() {
+  filters = {};
+  const p = document.getElementById('f-pol').value.trim();
+  const t = document.getElementById('f-tick').value.trim();
+  const tp= document.getElementById('f-type').value;
+  if (p)  filters.politician = p;
+  if (t)  filters.ticker     = t;
+  if (tp) filters.trade_type = tp;
+  loadTrades(true);
+}
+function resetFilters() {
+  ['f-pol','f-tick'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-type').value = '';
+  filters = {};
+  loadTrades(true);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const s = await fetch('/api/stats').then(r => r.json());
+  document.getElementById('s-total').textContent = (s.total||0).toLocaleString();
+  document.getElementById('s-buys' ).textContent = (s.buys ||0).toLocaleString();
+  document.getElementById('s-sells').textContent = (s.sells||0).toLocaleString();
+  document.getElementById('s-pols' ).textContent = (s.politicians||0).toLocaleString();
+  document.getElementById('s-ticks').textContent = (s.tickers||0).toLocaleString();
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+async function loadLeaderboard() {
+  const { leaders } = await fetch('/api/leaderboard?limit=25').then(r => r.json());
+  const el = document.getElementById('lb-list');
+  if (!leaders.length) {
+    el.innerHTML = '<div class="text-center text-slate-500 py-12">Aucune donnée</div>';
+    return;
+  }
+  el.innerHTML = leaders.map((l, i) => `
+    <div class="fade-in glass rounded-xl px-4 py-3 ${partyCls(l.politician_party)} flex items-center gap-4 cursor-pointer hover:-translate-y-0.5 transition-transform"
+         onclick="openPolitician('${l.politician_id}','${(l.politician_name||'').replace(/'/g,"\\'")}')">
+      <div class="w-7 text-center text-lg font-bold ${i<3?'text-amber-400':'text-slate-600'}">${i+1}</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-white text-sm truncate">${l.politician_name}</div>
+        <div class="text-slate-500 text-xs mt-0.5">${partyEmo(l.politician_party)} ${l.politician_party||''} · ${chamberLbl(l.politician_chamber)} · ${l.politician_state||''}</div>
+        <div class="text-slate-600 text-xs">Dernier trade : ${l.last_trade||'N/A'}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-white font-bold text-xl">${l.total_trades}</div>
+        <div class="text-xs text-slate-500">trades</div>
+        <div class="text-xs mt-1">
+          <span class="text-emerald-400">${l.buys} achats</span> · <span class="text-red-400">${l.sells} ventes</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+const CHART_OPTS = {
+  responsive: true,
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#475569', maxRotation: 45, font: { size: 10 } }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#475569', font: { size: 10 } }, grid: { color: '#1e293b' } },
+  },
+};
+
+async function loadCharts() {
+  const { data } = await fetch('/api/chart/daily?days=30').then(r => r.json());
+  const labels = data.map(d => d.trade_date);
+  const buys   = data.map(d => d.buys  || 0);
+  const sells  = data.map(d => d.sells || 0);
+
+  if (chartDaily) chartDaily.destroy();
+  chartDaily = new Chart(document.getElementById('chart-daily'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'Achats', data:buys,  backgroundColor:'#16a34a80', borderColor:'#22c55e', borderWidth:1.5 },
+        { label:'Ventes', data:sells, backgroundColor:'#dc262660', borderColor:'#ef4444', borderWidth:1.5 },
+      ],
+    },
+    options: CHART_OPTS,
+  });
+
+  const tB = buys.reduce((a,b)=>a+b,0);
+  const tS = sells.reduce((a,b)=>a+b,0);
+  if (chartDonut) chartDonut.destroy();
+  chartDonut = new Chart(document.getElementById('chart-donut'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Achats','Ventes'],
+      datasets: [{ data:[tB,tS], backgroundColor:['#16a34a','#dc2626'], borderWidth:0, hoverOffset:8 }],
+    },
+    options: {
+      responsive: true,
+      cutout: '65%',
+      plugins: {
+        legend: { labels: { color:'#94a3b8', font:{ size:12 } } },
+        tooltip: { callbacks: {
+          label: ctx => ` ${ctx.label}: ${ctx.raw} (${Math.round(ctx.raw/(tB+tS||1)*100)}%)`
+        }},
+      },
+    },
+  });
+}
+
+// ── Politician modal ──────────────────────────────────────────────────────────
+async function openPolitician(polId, polName) {
+  if (!polId) return;
+  document.getElementById('modal').classList.remove('hidden');
+  document.getElementById('m-name').textContent = polName;
+  document.getElementById('m-meta').textContent = '…';
+  document.getElementById('m-total').textContent = '…';
+  document.getElementById('m-buys').textContent  = '…';
+  document.getElementById('m-sells').textContent = '…';
+  document.getElementById('m-trades').innerHTML  = '<div class="text-slate-500 text-sm">Chargement…</div>';
+
+  const { profile, trades } = await fetch(`/api/politician/${polId}`).then(r => r.json());
+
+  const meta = [
+    partyEmo(profile?.party || '') + ' ' + (profile?.party || ''),
+    chamberLbl(profile?.chamber || ''),
+    profile?.state || '',
+  ].filter(Boolean).join(' · ');
+  document.getElementById('m-meta').textContent = meta;
+
+  const buys  = trades.filter(t => (t.trade_type||'').toLowerCase().includes('purchase') || (t.trade_type||'').toLowerCase().includes('buy')).length;
+  const sells = trades.length - buys;
+  document.getElementById('m-total').textContent = trades.length;
+  document.getElementById('m-buys').textContent  = buys;
+  document.getElementById('m-sells').textContent = sells;
+
+  const nw = document.getElementById('m-networth');
+  if (profile?.net_worth) {
+    nw.textContent = '💰 Patrimoine estimé : ' + profile.net_worth;
+    nw.classList.remove('hidden');
+  } else nw.classList.add('hidden');
+
+  const cm = document.getElementById('m-committees');
+  if (profile?.committees) {
+    cm.textContent = '🏛️ Commissions : ' + profile.committees;
+    cm.classList.remove('hidden');
+  } else cm.classList.add('hidden');
+
+  document.getElementById('m-trades').innerHTML = trades.length
+    ? trades.slice(0,20).map(t => `
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-slate-800/60">
+          <div class="flex items-center gap-2">
+            ${tradeBadge(t.trade_type)}
+            <span class="font-mono text-blue-400 text-sm">${t.ticker !== 'N/A' ? '$'+t.ticker : t.company}</span>
+          </div>
+          <div class="text-right">
+            <div class="text-amber-400 text-xs">${t.amount_range||''}</div>
+            <div class="text-slate-500 text-xs">${t.trade_date||''}</div>
+          </div>
+        </div>`).join('')
+    : '<div class="text-slate-500 text-sm">Aucun trade enregistré</div>';
+}
+
+function closeModal(e) {
+  if (e.target.id === 'modal') document.getElementById('modal').classList.add('hidden');
+}
+
+// ── Auto-refresh ──────────────────────────────────────────────────────────────
+async function refresh() {
+  await loadStats();
+  if (currentTab === 'trades') await loadTrades(true);
+  document.getElementById('last-update').textContent =
+    'Mis à jour : ' + new Date().toLocaleTimeString('fr-FR');
+}
+
+refresh();
+setInterval(refresh, 60_000); // UI refresh every 60 s (server polls every 15 min)
+</script>
+</body>
+</html>
