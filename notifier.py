@@ -189,12 +189,12 @@ async def send_startup_message():
             chat_id=TELEGRAM_CHAT_ID,
             text=(
                 "\U0001f680 <b>Congress Tracker demarre !</b>\n\n"
-                "Vous recevrez un rapport quotidien avec :\n"
-                "\u2022 Tous les nouveaux trades detectes\n"
-                "\u2022 Prix approx. + performance trade \u2192 declaration\n"
+                "Notifications en temps reel (toutes les 30 min) pour les trades suspects :\n"
+                "\u2022 Score de suspicion de delit d'initie\n"
                 "\u2022 Detection de conflits d'interet\n"
+                "\u2022 Prix approx. + performance trade \u2192 declaration\n"
                 "\u2022 Liens Wikipedia + Capitol Trades\n\n"
-                "\U0001f4ca Dashboard : http://localhost:8000"
+                "\U0001f4ca Dashboard : https://congress-tracker-vxp8.onrender.com"
             ),
             parse_mode=ParseMode.HTML,
         )
