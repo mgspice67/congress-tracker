@@ -8,7 +8,7 @@ scheduler.py – Real-time trade notifications.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -19,6 +19,7 @@ from notifier import send_trade_notification
 from performance import compute_trade_filing_performance
 from insider_score import compute_insider_score
 from enricher import enrich_trade
+from copy_trade import compute_copy_recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ MIN_INSIDER_SCORE = 20
 
 # Max notifications per poll to avoid flooding during recess-end dumps
 MAX_PER_POLL = 10
+
+# Only notify trades filed within this many days (filed_date recency filter)
+MAX_FILING_AGE_DAYS = 3
 
 
 async def poll_trades():
@@ -58,6 +62,7 @@ async def poll_trades():
         return
 
     # Score & notify
+    cutoff = date.today() - timedelta(days=MAX_FILING_AGE_DAYS)
     notified = 0
     for trade in new_trades:
         if notified >= MAX_PER_POLL:
@@ -65,12 +70,24 @@ async def poll_trades():
             await mark_notified(trade["id"])
             continue
 
+        # Skip trades filed more than MAX_FILING_AGE_DAYS ago (not actionable)
+        filed_date = trade.get("filed_date", "")
+        try:
+            if filed_date and datetime.strptime(filed_date, "%Y-%m-%d").date() < cutoff:
+                logger.debug("Skipped (too old, filed %s)  %s | %s", filed_date,
+                             trade.get("politician_name"), trade.get("ticker"))
+                await mark_notified(trade["id"])
+                continue
+        except ValueError:
+            pass
+
         filing_perf = await compute_trade_filing_performance(trade)
         enriched    = await enrich_trade(trade)
         insider     = compute_insider_score(enriched, filing_perf)
+        copy_reco   = await compute_copy_recommendation(enriched, filing_perf)
 
         if insider["score"] >= MIN_INSIDER_SCORE:
-            ok = await send_trade_notification(trade, filing_perf=filing_perf, insider=insider)
+            ok = await send_trade_notification(trade, filing_perf=filing_perf, insider=insider, copy_reco=copy_reco)
             if ok:
                 notified += 1
                 await mark_notified(trade["id"])

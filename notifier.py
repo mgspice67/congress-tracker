@@ -32,24 +32,24 @@ _TRADE_LABEL = {
     "sell":         "\U0001f534 VENTE",
     "sale_full":    "\U0001f534 VENTE TOTALE",
     "sale_partial": "\U0001f7e0 VENTE PARTIELLE",
-    "exchange":     "\U0001f504 ECHANGE",
-    "disclosure":   "\U0001f4cb DECLARATION",
+    "exchange":     "\U0001f504 ÉCHANGE",
+    "disclosure":   "\U0001f4cb DÉCLARATION",
 }
-_CHAMBER_LABEL = {"senate": "Senateur", "house": "Representant"}
+_CHAMBER_LABEL = {"senate": "Sénateur", "house": "Représentant"}
 
 
-def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = None) -> str:
+def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = None, copy_reco: dict | None = None) -> str:
     """Format a trade notification as Telegram HTML."""
     t_type    = (trade.get("trade_type") or "").lower()
     label     = _TRADE_LABEL.get(t_type, f"\U0001f4b1 {t_type.upper()}")
     party_emo = _PARTY_EMOJI.get(trade.get("politician_party", ""), "\u26aa")
-    chamber   = _CHAMBER_LABEL.get(trade.get("politician_chamber", ""), "Elu")
+    chamber   = _CHAMBER_LABEL.get(trade.get("politician_chamber", ""), "Élu")
     pol_name  = html.escape(trade.get("politician_name", "Inconnu"))
     party     = html.escape(trade.get("politician_party", ""))
     state     = html.escape(trade.get("politician_state", ""))
     ticker    = html.escape(trade.get("ticker", "N/A"))
     company   = html.escape(trade.get("company", "Inconnu"))
-    amount    = html.escape(trade.get("amount_range") or "Non divulgue")
+    amount    = html.escape(trade.get("amount_range") or "Non divulgué")
     tx_date   = trade.get("trade_date")  or "N/A"
     fil_date  = trade.get("filed_date")  or "N/A"
 
@@ -66,7 +66,7 @@ def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = No
         if insider["level"] == "high":
             insider_banner = f"\U0001f6a8 <b>TRADE SUSPECT — Score {score}/100</b>"
         else:
-            insider_banner = f"\u26a0\ufe0f <b>Trade a surveiller — Score {score}/100</b>"
+            insider_banner = f"\u26a0\ufe0f <b>Trade à surveiller — Score {score}/100</b>"
 
     lines = [
         insider_banner if insider_banner else "\U0001f3db <b>CONGRESS STOCK ALERT</b>",
@@ -95,7 +95,7 @@ def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = No
     lines += [
         f"\U0001f4b0 Montant : <code>{amount}</code>",
         f"\U0001f4c5 Transaction : {tx_date}",
-        f"\U0001f4cb Declare le  : {fil_date}",
+        f"\U0001f4cb Déclaré le  : {fil_date}",
     ]
 
     # Price at trade time
@@ -110,19 +110,19 @@ def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = No
         price_now = filing_perf.get("price_at_filing", 0)
         lines += [
             "",
-            f"{emo} <b>Performance trade \u2192 declaration : {sign}{pct:.1f}%</b>",
-            f"   Prix au trade : ${filing_perf['price_at_trade']:.2f} \u2192 declaration : ${price_now:.2f}",
+            f"{emo} <b>Performance trade \u2192 déclaration : {sign}{pct:.1f}%</b>",
+            f"   Prix au trade : ${filing_perf['price_at_trade']:.2f} \u2192 déclaration : ${price_now:.2f}",
         ]
 
     if owner_label:
-        lines.append(f"\U0001f511 Operateur : {html.escape(owner_label)}")
+        lines.append(f"\U0001f511 Opérateur : {html.escape(owner_label)}")
 
     # Conflict of interest
     if conflict_committee:
         lines += [
             "",
-            "\u26a0\ufe0f <b>CONFLIT D'INTERET POTENTIEL</b>",
-            f"Siege en commission : <i>{html.escape(conflict_committee)}</i>",
+            "\u26a0\ufe0f <b>CONFLIT D'INTÉRÊT POTENTIEL</b>",
+            f"Siège en commission : <i>{html.escape(conflict_committee)}</i>",
         ]
         if sector_display:
             lines.append(f"Secteur du trade : <i>{html.escape(sector_display)}</i>")
@@ -134,10 +134,24 @@ def _fmt(trade: dict, filing_perf: dict | None = None, insider: dict | None = No
         bar   = "\U0001f7e5" * min(score // 20, 5)  # ■ blocks up to 5
         lines += [
             "",
-            f"\U0001f575 <b>ANALYSE DELIT D'INITIE ({score}/100) {bar}</b>",
+            f"\U0001f575 <b>ANALYSE DÉLIT D'INITIÉ ({score}/100) {bar}</b>",
         ]
         for r in insider["reasons"]:
             lines.append(f"  \u2022 {html.escape(r)}")
+
+    # Copy trading recommendation
+    if copy_reco:
+        label  = copy_reco.get("label", "")
+        c_score = copy_reco.get("score", 0)
+        c_reasons = copy_reco.get("reasons", [])
+        price_now = copy_reco.get("price_now")
+        pct_now   = copy_reco.get("pct_since_trade")
+        lines += ["", f"<b>{html.escape(label)}</b> ({c_score}/100)"]
+        if price_now:
+            pct_str = f" ({'+' if pct_now >= 0 else ''}{pct_now:.1f}% depuis le trade)" if pct_now is not None else ""
+            lines.append(f"💲 Prix actuel : <b>${price_now:.2f}</b>{html.escape(pct_str)}")
+        for r in c_reasons:
+            lines.append(f"  • {html.escape(r)}")
 
     # Links
     lines.append("")
@@ -157,6 +171,7 @@ async def send_trade_notification(
     trade: dict,
     filing_perf: dict | None = None,
     insider: dict | None = None,
+    copy_reco: dict | None = None,
 ) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured – notification skipped")
@@ -166,7 +181,7 @@ async def send_trade_notification(
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
-            text=_fmt(enriched, filing_perf=filing_perf, insider=insider),
+            text=_fmt(enriched, filing_perf=filing_perf, insider=insider, copy_reco=copy_reco),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
         )
@@ -188,11 +203,11 @@ async def send_startup_message():
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=(
-                "\U0001f680 <b>Congress Tracker demarre !</b>\n\n"
-                "Notifications en temps reel (toutes les 30 min) pour les trades suspects :\n"
-                "\u2022 Score de suspicion de delit d'initie\n"
-                "\u2022 Detection de conflits d'interet\n"
-                "\u2022 Prix approx. + performance trade \u2192 declaration\n"
+                "\U0001f680 <b>Congress Tracker démarre !</b>\n\n"
+                "Notifications en temps réel (toutes les 30 min) pour les trades suspects :\n"
+                "\u2022 Score de suspicion de délit d'initié\n"
+                "\u2022 Détection de conflits d'intérêt\n"
+                "\u2022 Prix approx. + performance trade \u2192 déclaration\n"
                 "\u2022 Liens Wikipedia + Capitol Trades\n\n"
                 "\U0001f4ca Dashboard : https://congress-tracker-vxp8.onrender.com"
             ),
@@ -212,7 +227,7 @@ async def send_daily_header(count: int):
             chat_id=TELEGRAM_CHAT_ID,
             text=(
                 f"\U0001f3db\U0001f4ca <b>RAPPORT QUOTIDIEN</b>\n\n"
-                f"\U0001f4e5 <b>{count}</b> nouveau(x) trade(s) detecte(s)\n"
+                f"\U0001f4e5 <b>{count}</b> nouveau(x) trade(s) détecté(s)\n"
                 f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
             ),
             parse_mode=ParseMode.HTML,

@@ -13,10 +13,6 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-import aiosqlite
-
-from config import DATABASE_PATH
-
 logger = logging.getLogger(__name__)
 
 # ── Sector → committee keywords mapping ──────────────────────────────────────
@@ -69,44 +65,30 @@ SECTOR_EMOJI: dict[str, str] = {
 }
 
 
-# ── Cache table (created alongside existing schema) ───────────────────────────
+# ── In-memory ticker cache (process-scoped) ───────────────────────────────────
+# Replaced the SQLite cache: in cron.py mode each run is a fresh process, so
+# persistence across runs is not needed. Within a single run, the dict avoids
+# refetching yfinance for repeated tickers.
+
+_TICKER_CACHE: dict[str, dict] = {}
+
 
 async def ensure_cache_table():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS ticker_cache (
-                ticker      TEXT PRIMARY KEY,
-                sector      TEXT,
-                industry    TEXT,
-                long_name   TEXT,
-                fetched_at  TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
+    """No-op kept for backwards compatibility with old callers."""
+    return
 
 
 async def _get_cached_sector(ticker: str) -> dict | None:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM ticker_cache WHERE ticker = ?", (ticker,)
-        ) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    return _TICKER_CACHE.get(ticker)
 
 
 async def _save_sector_cache(ticker: str, sector: str, industry: str, long_name: str):
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("""
-            INSERT INTO ticker_cache (ticker, sector, industry, long_name)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(ticker) DO UPDATE SET
-                sector = excluded.sector,
-                industry = excluded.industry,
-                long_name = excluded.long_name,
-                fetched_at = CURRENT_TIMESTAMP
-        """, (ticker, sector, industry, long_name))
-        await db.commit()
+    _TICKER_CACHE[ticker] = {
+        "ticker":    ticker,
+        "sector":    sector,
+        "industry":  industry,
+        "long_name": long_name,
+    }
 
 
 # ── yfinance lookup (sync → run in thread) ────────────────────────────────────
