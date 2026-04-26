@@ -50,39 +50,25 @@ def parse_amount(amount_str: str) -> float:
     return 50_000
 
 
-# ── Price cache ───────────────────────────────────────────────────────────────
+# ── In-memory price cache (process-scoped) ────────────────────────────────────
+# Replaced the SQLite cache: in cron.py mode each run is a fresh process, so
+# persistence across runs is not needed. Within a single run, the dict avoids
+# refetching the same (ticker, date) twice (e.g. when two trades share a ticker).
+
+_PRICE_CACHE: dict[tuple[str, str], float] = {}
+
 
 async def ensure_price_cache():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS ticker_price_cache (
-                ticker      TEXT,
-                price_date  TEXT,
-                close_price REAL,
-                fetched_at  TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (ticker, price_date)
-            )
-        """)
-        await db.commit()
+    """No-op kept for backwards compatibility with old callers."""
+    return
 
 
 async def _get_cached_price(ticker: str, price_date: str) -> float | None:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        async with db.execute(
-            "SELECT close_price FROM ticker_price_cache WHERE ticker=? AND price_date=?",
-            (ticker, price_date)
-        ) as cur:
-            row = await cur.fetchone()
-            return row[0] if row else None
+    return _PRICE_CACHE.get((ticker, price_date))
 
 
 async def _save_price(ticker: str, price_date: str, price: float):
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute("""
-            INSERT OR REPLACE INTO ticker_price_cache (ticker, price_date, close_price)
-            VALUES (?, ?, ?)
-        """, (ticker, price_date, price))
-        await db.commit()
+    _PRICE_CACHE[(ticker, price_date)] = price
 
 
 def _fetch_price_sync(ticker: str, on_date: str) -> float | None:

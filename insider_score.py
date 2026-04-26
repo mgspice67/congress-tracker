@@ -85,7 +85,7 @@ def compute_insider_score(trade: dict, filing_perf: dict | None) -> dict:
     if conflict_committee:
         score += 40
         reasons.append(
-            f"Siege en commission \"{conflict_committee}\" en lien direct avec "
+            f"Siège en commission \"{conflict_committee}\" en lien direct avec "
             f"le secteur {sector} de {ticker}"
         )
 
@@ -99,7 +99,7 @@ def compute_insider_score(trade: dict, filing_perf: dict | None) -> dict:
             score += 30
             reasons.append(
                 f"Achat avant une hausse de +{pct:.1f}% "
-                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} entre trade et declaration)"
+                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} entre trade et déclaration)"
             )
         elif is_buy and pct >= 10:
             score += 20
@@ -111,13 +111,13 @@ def compute_insider_score(trade: dict, filing_perf: dict | None) -> dict:
             score += 30
             reasons.append(
                 f"Vente avant une chute de {pct:.1f}% "
-                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} — perte evitee)"
+                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} — perte évitée)"
             )
         elif is_sell and pct <= -10:
             score += 20
             reasons.append(
                 f"Vente avant une chute de {pct:.1f}% "
-                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} — perte evitee)"
+                f"(${p_at_trade:.2f} → ${p_at_filing:.2f} — perte évitée)"
             )
 
     # ── 3. Montant du trade ───────────────────────────────────────────────────
@@ -137,8 +137,8 @@ def compute_insider_score(trade: dict, filing_perf: dict | None) -> dict:
         if delay <= 10:
             score += 10
             reasons.append(
-                f"Declaration tres rapide : {delay} jours apres le trade "
-                f"(signe de conscience de la sensibilite de l'info)"
+                f"Déclaration très rapide : {delay} jours après le trade "
+                f"(signe de conscience de la sensibilité de l'info)"
             )
         elif delay <= 20:
             score += 5
@@ -147,7 +147,7 @@ def compute_insider_score(trade: dict, filing_perf: dict | None) -> dict:
     if sector in HIGH_OVERSIGHT_SECTORS:
         score += 5
         if not any("secteur" in r.lower() for r in reasons):
-            reasons.append(f"Secteur sous haute surveillance reglementaire : {sector}")
+            reasons.append(f"Secteur sous haute surveillance réglementaire : {sector}")
 
     # ── Niveau de suspicion ───────────────────────────────────────────────────
     if score >= 75:
