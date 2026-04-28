@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 NOTIFIED_FILE       = Path(__file__).parent / "notified_trades.json"
 MIN_INSIDER_SCORE   = 20
 MAX_PER_RUN         = 10
-MAX_FILING_AGE_DAYS = 3
+MAX_FILING_AGE_DAYS = 7   # TEMP: catch-up after the week-long outage. Revert to 3 after.
 NOTIFIED_KEEP       = 5000  # cap to avoid the JSON file growing unbounded
 
 
