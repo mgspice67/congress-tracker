@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 NOTIFIED_FILE       = Path(__file__).parent / "notified_trades.json"
 MIN_INSIDER_SCORE   = 20
 MAX_PER_RUN         = 10
-MAX_FILING_AGE_DAYS = 7   # TEMP: catch-up after the week-long outage. Revert to 3 after.
+MAX_FILING_AGE_DAYS = 14   # TEMP: catch-up after the week-long outage. Revert to 3 after.
 NOTIFIED_KEEP       = 5000  # cap to avoid the JSON file growing unbounded
 
 
@@ -75,6 +75,8 @@ async def main():
 
     cutoff = date.today() - timedelta(days=MAX_FILING_AGE_DAYS)
     sent = 0
+    skipped_old   = 0
+    skipped_score = 0
 
     for trade in new_trades:
         if sent >= MAX_PER_RUN:
@@ -84,9 +86,10 @@ async def main():
         filed_date = trade.get("filed_date", "")
         try:
             if filed_date and datetime.strptime(filed_date, "%Y-%m-%d").date() < cutoff:
-                logger.debug("Skipped (too old, filed %s) %s | %s",
-                             filed_date, trade.get("politician_name"), trade.get("ticker"))
+                logger.info("Skipped (too old, filed %s) %s | %s",
+                            filed_date, trade.get("politician_name"), trade.get("ticker"))
                 notified.add(trade["id"])
+                skipped_old += 1
                 continue
         except ValueError:
             pass
@@ -117,14 +120,17 @@ async def main():
                 logger.warning("Telegram send failed for %s — will retry next run",
                                trade.get("id"))
         else:
-            logger.debug("Skipped (score=%d) %s | %s",
-                         insider["score"], trade.get("politician_name"), trade.get("ticker"))
+            logger.info("Skipped (score=%d) %s | %s | %s",
+                        insider["score"], trade.get("politician_name"),
+                        trade.get("ticker"), trade.get("trade_type"))
             notified.add(trade["id"])
+            skipped_score += 1
 
         await asyncio.sleep(0.5)
 
     save_notified(notified)
-    logger.info("Run complete: %d notified, %d total seen IDs", sent, len(notified))
+    logger.info("Run complete: %d notified, %d skipped for age, %d skipped for low score, %d total seen IDs",
+                sent, skipped_old, skipped_score, len(notified))
 
 
 if __name__ == "__main__":
