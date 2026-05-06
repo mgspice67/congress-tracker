@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 NOTIFIED_FILE       = Path(__file__).parent / "notified_trades.json"
 MIN_INSIDER_SCORE   = 20
 MAX_PER_RUN         = 10
-MAX_FILING_AGE_DAYS = 3   # only notify trades filed within this many days
+MAX_FILING_AGE_DAYS = 3   # only notify trades whose PTR was filed within this many days
+MAX_TRADE_AGE_DAYS  = 30  # only notify trades whose transaction date is within this many days
 NOTIFIED_KEEP       = 5000  # cap to avoid the JSON file growing unbounded
 
 
@@ -73,10 +74,12 @@ async def main():
         save_notified(notified)
         return
 
-    cutoff = date.today() - timedelta(days=MAX_FILING_AGE_DAYS)
+    filing_cutoff = date.today() - timedelta(days=MAX_FILING_AGE_DAYS)
+    trade_cutoff  = date.today() - timedelta(days=MAX_TRADE_AGE_DAYS)
     sent = 0
-    skipped_old   = 0
-    skipped_score = 0
+    skipped_filing = 0
+    skipped_stale  = 0
+    skipped_score  = 0
 
     for trade in new_trades:
         if sent >= MAX_PER_RUN:
@@ -85,11 +88,22 @@ async def main():
 
         filed_date = trade.get("filed_date", "")
         try:
-            if filed_date and datetime.strptime(filed_date, "%Y-%m-%d").date() < cutoff:
-                logger.info("Skipped (too old, filed %s) %s | %s",
+            if filed_date and datetime.strptime(filed_date, "%Y-%m-%d").date() < filing_cutoff:
+                logger.info("Skipped (filing too old, filed %s) %s | %s",
                             filed_date, trade.get("politician_name"), trade.get("ticker"))
                 notified.add(trade["id"])
-                skipped_old += 1
+                skipped_filing += 1
+                continue
+        except ValueError:
+            pass
+
+        trade_date = trade.get("trade_date", "")
+        try:
+            if trade_date and datetime.strptime(trade_date, "%Y-%m-%d").date() < trade_cutoff:
+                logger.info("Skipped (transaction too old, traded %s) %s | %s",
+                            trade_date, trade.get("politician_name"), trade.get("ticker"))
+                notified.add(trade["id"])
+                skipped_stale += 1
                 continue
         except ValueError:
             pass
@@ -129,8 +143,8 @@ async def main():
         await asyncio.sleep(0.5)
 
     save_notified(notified)
-    logger.info("Run complete: %d notified, %d skipped for age, %d skipped for low score, %d total seen IDs",
-                sent, skipped_old, skipped_score, len(notified))
+    logger.info("Run complete: %d notified, %d skipped (old filing), %d skipped (stale trade), %d skipped (low score), %d total seen IDs",
+                sent, skipped_filing, skipped_stale, skipped_score, len(notified))
 
 
 if __name__ == "__main__":
