@@ -9,3 +9,4 @@ python-dotenv==1.0.0
 yfinance>=0.2.40
 pyyaml>=6.0
 pypdf>=4.0
+curl_cffi>=0.7
