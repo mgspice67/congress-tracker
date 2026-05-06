@@ -175,9 +175,13 @@ def _parse_ptr_pdf(pdf_bytes: bytes, politician_name: str, politician_state: str
 
         company = re.sub(r'\s+', ' ', " ".join(company_parts)).strip()
 
-        trade_type = _normalize_trade_type(tx_raw)
-        tx_date    = _fmt_date(tx_date_s)
-        fil_date   = _fmt_date(fil_date_s)
+        trade_type        = _normalize_trade_type(tx_raw)
+        tx_date           = _fmt_date(tx_date_s)
+        notification_date = _fmt_date(fil_date_s)
+        # filed_date = official PTR submission date (from XML FilingDate),
+        # NOT the bank-notification date inside the PDF. Falls back to
+        # notification_date if the XML value is missing/unparseable.
+        filed_date = _fmt_date(filing_date_str) if filing_date_str else notification_date
 
         uid_str  = f"{pol_id}-{ticker}-{tx_date}-{trade_type}-{amount}"
         uid      = hashlib.md5(uid_str.encode()).hexdigest()[:12]
@@ -199,7 +203,8 @@ def _parse_ptr_pdf(pdf_bytes: bytes, politician_name: str, politician_state: str
             "trade_type":         trade_type,
             "amount_range":       amount,
             "trade_date":         tx_date,
-            "filed_date":         fil_date,
+            "filed_date":         filed_date,
+            "notification_date":  notification_date,
             "price":              None,
             "asset_type":         "stock",
             "raw":                {"owner": owner_raw, "doc_id": doc_id},
