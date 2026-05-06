@@ -305,91 +305,173 @@ async def _fetch_and_parse_pdf(member_xml) -> list[dict]:
     return trades
 
 
-# ── Senate (mirror via GitHub – fallback) ─────────────────────────────────────
+# ── Senate (live scrape of efdsearch.senate.gov via curl_cffi) ────────────────
+#
+# eFD is protected by Akamai bot manager — plain httpx/requests are blocked
+# on TLS fingerprint. curl_cffi impersonates a real Chrome and gets through.
 
-_SENATE_MIRRORS = [
-    "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/data",
-]
+_EFD_BASE = "https://efdsearch.senate.gov"
+_EFD_HOME = f"{_EFD_BASE}/search/home/"
+_EFD_DATA = f"{_EFD_BASE}/search/report/data/"
+
+# Days back to scan in the eFD listing. The cron's MAX_FILING_AGE_DAYS filter
+# narrows this further; we just need enough headroom to never miss a filing.
+_EFD_LOOKBACK_DAYS = 14
+# Cap PTR detail fetches per run to be polite to the server.
+_EFD_MAX_PTRS = 25
+
+_EFD_ROW_RE = re.compile(
+    r'<tr>\s*'
+    r'<td>\s*(\d+)\s*</td>\s*'                 # row #
+    r'<td>\s*(\d{2}/\d{2}/\d{4})\s*</td>\s*'   # tx date
+    r'<td>\s*(.+?)\s*</td>\s*'                 # owner
+    r'<td>(.*?)</td>\s*'                       # ticker (HTML)
+    r'<td>(.*?)</td>\s*'                       # asset name (HTML)
+    r'<td>\s*(.+?)\s*</td>\s*'                 # asset type
+    r'<td>\s*(.+?)\s*</td>\s*'                 # trade type
+    r'<td>\s*(.+?)\s*</td>\s*'                 # amount
+    r'<td>(.*?)</td>\s*'                       # comment
+    r'</tr>',
+    re.DOTALL,
+)
+_EFD_TICKER_RE = re.compile(r'>([A-Z0-9.\-]+)</a>')
+_EFD_TAGS_RE   = re.compile(r'<[^>]+>')
+
+
+def _ef_normalize_type(raw: str) -> str:
+    r = raw.lower()
+    if "purchase" in r:            return "purchase"
+    if "partial"  in r:            return "sale_partial"
+    if "sale" in r or "sell" in r: return "sale"
+    if "exchange" in r:            return "exchange"
+    return r
+
+
+def _fetch_senate_sync() -> list[dict]:
+    """Synchronous scrape of efdsearch.senate.gov. Wrapped in a thread by
+    fetch_senate_trades(). Uses curl_cffi to bypass Akamai TLS fingerprinting."""
+    from curl_cffi import requests as crequests
+
+    s = crequests.Session(impersonate="chrome")
+
+    # 1. Consent flow
+    r = s.get(_EFD_HOME, timeout=30)
+    r.raise_for_status()
+    m = re.search(r'name="csrfmiddlewaretoken"\s+value="([^"]+)"', r.text)
+    if not m:
+        logger.error("eFD: no CSRF token on home page")
+        return []
+    token = m.group(1)
+    r = s.post(
+        _EFD_HOME,
+        data={"csrfmiddlewaretoken": token, "prohibition_agreement": "1"},
+        headers={"Referer": _EFD_HOME},
+        timeout=30,
+    )
+    r.raise_for_status()
+
+    # 2. List recent PTRs (report_types=[11] is the PTR code)
+    end   = date.today()
+    start = end - timedelta(days=_EFD_LOOKBACK_DAYS)
+    payload = {
+        "draw": "1",
+        "start": "0",
+        "length": "100",
+        "report_types": "[11]",
+        "filer_types": "[]",
+        "submitted_start_date": start.strftime("%m/%d/%Y") + " 00:00:00",
+        "submitted_end_date":   end.strftime("%m/%d/%Y")   + " 23:59:59",
+        "candidate_state": "",
+        "senator_state":   "",
+        "office_id":       "",
+        "first_name":      "",
+        "last_name":       "",
+        "csrfmiddlewaretoken": token,
+    }
+    r = s.post(
+        _EFD_DATA,
+        data=payload,
+        headers={"Referer": f"{_EFD_BASE}/search/", "X-Requested-With": "XMLHttpRequest"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    rows = r.json().get("data", []) or []
+
+    ptrs = []
+    for row in rows:
+        if len(row) < 5:
+            continue
+        first, last, _, link_html, filed_str = row[0], row[1], row[2], row[3], row[4]
+        href_m = re.search(r'href="([^"]+)"', link_html)
+        if not href_m:
+            continue
+        href = href_m.group(1)
+        # Skip paper (scanned PDF) filings — only electronic PTRs are HTML-parseable
+        if "/search/view/ptr/" not in href:
+            continue
+        ptrs.append({
+            "name":  f"{first} {last}".strip(),
+            "url":   _EFD_BASE + href,
+            "filed": _fmt_date(filed_str),
+        })
+
+    logger.info("eFD: %d electronic PTRs in last %dd", len(ptrs), _EFD_LOOKBACK_DAYS)
+
+    # 3. Parse each PTR detail page
+    all_trades = []
+    for p in ptrs[:_EFD_MAX_PTRS]:
+        try:
+            r = s.get(p["url"], timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            logger.debug("eFD detail fetch error %s: %s", p["url"], e)
+            continue
+
+        pol_id = p["name"].lower().replace(" ", "_").replace(",", "").replace(".", "")
+        for m in _EFD_ROW_RE.finditer(r.text):
+            _, tx_raw, owner, tk_html, nm_html, atype, ttype, amount, _ = m.groups()
+            tk_m   = _EFD_TICKER_RE.search(tk_html)
+            ticker = (tk_m.group(1) if tk_m else _EFD_TAGS_RE.sub("", tk_html).strip()) or "N/A"
+            company = re.sub(r"\s+", " ", _EFD_TAGS_RE.sub("", nm_html)).strip() or "Unknown"
+            tx_date    = _fmt_date(tx_raw)
+            trade_type = _ef_normalize_type(ttype)
+
+            uid_str  = f"{pol_id}-{ticker}-{tx_date}-{trade_type}-{amount}"
+            uid      = hashlib.md5(uid_str.encode()).hexdigest()[:12]
+            all_trades.append({
+                "id":                 f"senate_{uid}",
+                "politician_id":      pol_id,
+                "politician_name":    p["name"],
+                "politician_party":   "",
+                "politician_state":   "",
+                "politician_chamber": "senate",
+                "ticker":             ticker,
+                "company":            company[:120],
+                "trade_type":         trade_type,
+                "amount_range":       amount.strip(),
+                "trade_date":         tx_date,
+                "filed_date":         p["filed"],
+                "price":              None,
+                "asset_type":         atype.strip().lower() or "stock",
+                "raw":                {"owner": owner, "ptr_url": p["url"]},
+            })
+
+    logger.info("eFD: %d Senate trades extracted", len(all_trades))
+    return all_trades
+
 
 async def fetch_senate_trades() -> list[dict]:
-    """Fetch Senate trades from available mirrors."""
+    """Fetch Senate trades from efdsearch.senate.gov. Runs the (synchronous)
+    curl_cffi scraper in a thread to keep the async signature."""
     if MOCK_DATA:
         return []
-
-    # Try to get list of recent files from the mirror
-    api_url = "https://api.github.com/repos/timothycarambat/senate-stock-watcher-data/contents/data"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(api_url, headers={**_HEADERS, "Accept": "application/json"})
-            r.raise_for_status()
-            files = r.json()
+        trades = await asyncio.to_thread(_fetch_senate_sync)
     except Exception as e:
-        logger.warning("Senate mirror listing failed: %s", e)
+        logger.error("Senate eFD fetch error: %s", e)
         return []
-
-    # Get JSON files, sorted most recent first
-    json_files = sorted(
-        [f for f in files if f["name"].endswith(".json") and "yaml" not in f["name"]],
-        key=lambda x: x["name"],
-        reverse=True,
-    )[:10]
-
-    all_trades = []
-    async with httpx.AsyncClient(timeout=20) as client:
-        for f in json_files:
-            try:
-                r = await client.get(f["download_url"], headers=_HEADERS)
-                r.raise_for_status()
-                data = r.json()
-                if isinstance(data, list):
-                    for item in data:
-                        item["_source_file"] = f["name"]
-                    all_trades.extend(data)
-            except Exception as e:
-                logger.debug("Senate file %s error: %s", f["name"], e)
-                continue
-
-    if not all_trades:
-        logger.warning("Senate: no trades fetched from any mirror")
-        return []
-
-    # Normalize and deduplicate
-    normalized = [_normalize_senate(t) for t in all_trades]
-    normalized.sort(key=lambda x: x.get("trade_date", ""), reverse=True)
-    logger.info("Senate: %d trades fetched", len(normalized))
-    return normalized[:100]
-
-
-def _normalize_senate(raw: dict) -> dict:
-    name      = raw.get("senator") or raw.get("_senator_name", "Unknown")
-    ticker    = (raw.get("ticker") or "N/A").strip()
-    tx_type   = (raw.get("type") or "").lower()
-    uid_str   = f"{name}-{ticker}-{raw.get('transaction_date','')}-{raw.get('amount','')}"
-    uid       = hashlib.md5(uid_str.encode()).hexdigest()[:12]
-    trade_type = (
-        "purchase"     if "purchase" in tx_type else
-        "sale_partial" if "partial"  in tx_type else
-        "sale"         if "sale"     in tx_type else
-        tx_type
-    )
-    pol_id = name.lower().replace(" ", "_").replace(",", "").replace(".", "")
-    return {
-        "id":                 f"senate_{uid}",
-        "politician_id":      pol_id,
-        "politician_name":    name,
-        "politician_party":   raw.get("party", ""),
-        "politician_state":   raw.get("state", ""),
-        "politician_chamber": "senate",
-        "ticker":             ticker if ticker and ticker != "--" else "N/A",
-        "company":            raw.get("asset_description", "Unknown"),
-        "trade_type":         trade_type,
-        "amount_range":       raw.get("amount", ""),
-        "trade_date":         raw.get("transaction_date", ""),
-        "filed_date":         raw.get("disclosure_date", ""),
-        "price":              None,
-        "asset_type":         raw.get("asset_type", "stock"),
-        "raw":                raw,
-    }
+    trades.sort(key=lambda x: x.get("trade_date", ""), reverse=True)
+    return trades
 
 
 # ── Combined ──────────────────────────────────────────────────────────────────
